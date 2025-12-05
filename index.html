@@ -4,12 +4,11 @@
   <meta charset="UTF-8">
   <title>Registro de Trator</title>
 
-  <!-- 🔥 PASSO 3 — ADICIONADO PARA VIRAR APP -->
+  <!-- CONFIGURAÇÃO PWA -->
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/png" sizes="192x192" href="icone_192.png">
   <link rel="apple-touch-icon" href="icone_512.png">
   <meta name="theme-color" content="#007bff">
-  <!-- 🔥 FIM DO PASSO 3 -->
 
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #f8f9fa; }
@@ -21,7 +20,7 @@
     #mensagem { margin-top: 15px; padding: 10px; border-radius: 5px; font-weight: bold; text-align: center; display: none; }
     .sucesso { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
     .erro { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    .botoes-acoes { display: flex; gap: 10px; margin-top: 10px; }
+    .botoes-acoes { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
     .btn-apagar { background: #dc3545; }
     .btn-apagar:hover { background: #b02a37; }
   </style>
@@ -55,6 +54,7 @@
   <button onclick="registrar()">Registrar</button>
   <button onclick="exportarCSV()">Exportar CSV</button>
   <button class="btn-apagar" onclick="limparTodos()">Apagar Tudo</button>
+  <button onclick="sincronizarPendentes()">🔄 Sincronizar Pendentes</button>
 </div>
 
 <div id="mensagem"></div>
@@ -78,9 +78,14 @@
 
 <script>
 let registros = JSON.parse(localStorage.getItem("registrosTrator")) || [];
+let pendentes = JSON.parse(localStorage.getItem("pendentesDeEnvio")) || [];
 
 function salvarLocal() {
   localStorage.setItem("registrosTrator", JSON.stringify(registros));
+}
+
+function salvarPendentes() {
+  localStorage.setItem("pendentesDeEnvio", JSON.stringify(pendentes));
 }
 
 function calcularHorasTrabalhadas(hIni, hFim) {
@@ -110,29 +115,11 @@ async function enviarParaGoogleSheets(dados) {
     mostrarMensagem("✅ Registro enviado ao Google Sheets!", "sucesso");
 
   } catch (erro) {
-    console.error("Erro ao enviar:", erro);
-    mostrarMensagem("❌ Erro de conexão com o Google Sheets.", "erro");
+    console.warn("Sem internet — salvando como pendente.");
+    pendentes.push(dados);
+    salvarPendentes();
+    mostrarMensagem("⚠️ Sem internet! Registro salvo e será sincronizado depois.", "erro");
   }
-}
-
-function atualizarTabela() {
-  const tbody = document.querySelector("#tabela tbody");
-  tbody.innerHTML = "";
-  registros.forEach((r, index) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${r.data}</td>
-      <td>${r.operador}</td>
-      <td>${r.associado}</td>
-      <td>${r.modelo}</td>
-      <td>${r.atividade}</td>
-      <td>${r.horimetroInicial}</td>
-      <td>${r.horimetroFinal}</td>
-      <td>${r.horasTrabalhadas}</td>
-      <td><button class="btn-apagar" onclick="apagarRegistro(${index})">🗑️ Apagar</button></td>
-    `;
-    tbody.appendChild(tr);
-  });
 }
 
 function registrar() {
@@ -165,6 +152,26 @@ function registrar() {
 
   document.querySelectorAll("input").forEach(i => i.value = "");
   mostrarMensagem("✅ Registro adicionado com sucesso!", "sucesso");
+}
+
+function atualizarTabela() {
+  const tbody = document.querySelector("#tabela tbody");
+  tbody.innerHTML = "";
+  registros.forEach((r, index) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${r.data}</td>
+      <td>${r.operador}</td>
+      <td>${r.associado}</td>
+      <td>${r.modelo}</td>
+      <td>${r.atividade}</td>
+      <td>${r.horimetroInicial}</td>
+      <td>${r.horimetroFinal}</td>
+      <td>${r.horasTrabalhadas}</td>
+      <td><button class="btn-apagar" onclick="apagarRegistro(${index})">🗑️ Apagar</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
 function apagarRegistro(index) {
@@ -203,15 +210,49 @@ function exportarCSV() {
   link.click();
 }
 
+async function sincronizarPendentes() {
+  if (pendentes.length === 0) {
+    mostrarMensagem("Nenhum registro pendente para sincronizar.", "erro");
+    return;
+  }
+
+  mostrarMensagem("⏳ Sincronizando...", "sucesso");
+
+  const url = "https://script.google.com/macros/s/AKfycbznwlGzG1-0lnV1810c4Vi5jlagHMRE1jpsSxNx56XBgc7u3QBbjbGozVnicawKuRMSsQ/exec";
+
+  let enviados = 0;
+
+  for (let item of pendentes) {
+    try {
+      await fetch(url, {
+        method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(item)
+      });
+
+      enviados++;
+
+    } catch (e) {
+      mostrarMensagem("❌ Ainda sem internet. Tente novamente.", "erro");
+      return;
+    }
+  }
+
+  pendentes = [];
+  salvarPendentes();
+  mostrarMensagem(`✅ ${enviados} registro(s) sincronizados!`, "sucesso");
+}
+
 atualizarTabela();
 </script>
 
-<!-- 🔥 REGISTRO DO SERVICE WORKER -->
+<!-- SERVICE WORKER -->
 <script>
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./service-worker.js")
-    .then(() => console.log("✅ Service Worker registrado"))
-    .catch(err => console.error("❌ Erro ao registrar Service Worker:", err));
+    .then(() => console.log("Service Worker registrado"))
+    .catch(err => console.error("Erro ao registrar SW:", err));
 }
 </script>
 
